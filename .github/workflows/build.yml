@@ -23,23 +23,93 @@ jobs:
           gradle-version: '8.0.2'
 
       - name: Fix project
-        shell: bash
+        shell: python3 {0}
         run: |
-          python3 - <<'PY'
           from pathlib import Path
           import re
           import xml.etree.ElementTree as ET
 
-          for name in ("app/build.gradle.kts", "app/build.gradle"):
-              path = Path(name)
-              if path.exists():
-                  lines = path.read_text().splitlines(keepends=True)
-                  path.write_text("".join(
-                      line for line in lines
-                      if "androidx.accessibilityservice:accessibilityservice" not in line
-                  ))
+          build = Path("app/build.gradle.kts")
+          text = build.read_text()
+          text = "\n".join(
+              line for line in text.splitlines()
+              if "androidx.accessibilityservice:accessibilityservice" not in line
+          )
+          text += "\n\ndependencies {\n"
+          text += '    implementation("androidx.compose.material:material-icons-extended:1.5.0")\n'
+          text += "}\n"
+          text += "\ntasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {\n"
+          text += "    kotlinOptions {\n"
+          text += "        freeCompilerArgs += listOf(\n"
+          text += '            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",\n'
+          text += '            "-opt-in=androidx.compose.material.ExperimentalMaterialApi"\n'
+          text += "        )\n"
+          text += "    }\n"
+          text += "}\n"
+          build.write_text(text)
 
           icons = Path("app/src/main/res/mipmap")
           icons.mkdir(parents=True, exist_ok=True)
-          icon = (
-              '<?xml version="1.0" encodi
+          icon = '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
+          icon += 'android:width="48dp" android:height="48dp" '
+          icon += 'android:viewportWidth="48" android:viewportHeight="48">'
+          icon += '<path android:fillColor="#263238" android:pathData="M0,0h48v48h-48z"/>'
+          icon += '<path android:fillColor="#FFFFFF" android:pathData="M12,21h24v6h-24z"/>'
+          icon += '</vector>'
+          for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+              path = icons / name
+              if not path.exists():
+                  path.write_text(icon)
+
+          values = Path("app/src/main/res/values")
+          values.mkdir(parents=True, exist_ok=True)
+          found = False
+          for path in values.glob("*.xml"):
+              for item in ET.parse(path).getroot():
+                  if item.get("name") == "accessibility_description":
+                      if item.tag == "string" or item.get("type") == "string":
+                          found = True
+          if not found:
+              root = ET.Element("resources")
+              item = ET.SubElement(root, "string", name="accessibility_description")
+              item.text = "Allows BetaBlocker to access screen content for filtering."
+              ET.ElementTree(root).write(
+                  values / "build_accessibility_description.xml",
+                  encoding="utf-8",
+                  xml_declaration=True
+              )
+
+          imports = [
+              "androidx.compose.foundation.clickable",
+              "androidx.compose.material.icons.filled.ExpandLess",
+              "androidx.compose.material.icons.filled.ExpandMore",
+              "androidx.compose.material.icons.filled.CloudUpload",
+          ]
+          for path in Path("app/src").rglob("CustomizationScreen.kt"):
+              text = path.read_text()
+              missing = [
+                  "import " + name for name in imports
+                  if "import " + name not in text
+              ]
+              if missing:
+                  text, count = re.subn(
+                      r"(?m)^(package\s+[^\r\n]+)",
+                      lambda m: m.group(1) + "\n\n" + "\n".join(missing),
+                      text,
+                      count=1
+                  )
+                  if count != 1:
+                      raise RuntimeError(f"Package declaration not found: {path}")
+                  path.write_text(text)
+
+          print("Project fixes applied.")
+
+      - name: Build debug APK
+        run: gradle -Pandroid.useAndroidX=true :app:assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BetaBlocker-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
