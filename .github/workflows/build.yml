@@ -27,6 +27,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           import xml.etree.ElementTree as ET
 
           for name in ("app/build.gradle.kts", "app/build.gradle"):
@@ -41,59 +42,4 @@ jobs:
           icons = Path("app/src/main/res/mipmap")
           icons.mkdir(parents=True, exist_ok=True)
           icon = (
-              '<?xml version="1.0" encoding="utf-8"?>'
-              '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
-              'android:width="48dp" android:height="48dp" '
-              'android:viewportWidth="48" android:viewportHeight="48">'
-              '<path android:fillColor="#263238" android:pathData="M0,0h48v48h-48z"/>'
-              '<path android:fillColor="#FFFFFF" android:pathData="M12,21h24v6h-24z"/>'
-              '</vector>'
-          )
-          for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
-              path = icons / name
-              if not path.exists():
-                  path.write_text(icon)
-
-          values = Path("app/src/main/res/values")
-          values.mkdir(parents=True, exist_ok=True)
-          found = False
-          for path in values.glob("*.xml"):
-              for item in ET.parse(path).getroot():
-                  if item.get("name") == "accessibility_description":
-                      if item.tag == "string" or item.get("type") == "string":
-                          found = True
-          if not found:
-              root = ET.Element("resources")
-              item = ET.SubElement(root, "string", name="accessibility_description")
-              item.text = "Allows BetaBlocker to access screen content for filtering."
-              ET.ElementTree(root).write(
-                  values / "build_accessibility_description.xml",
-                  encoding="utf-8",
-                  xml_declaration=True
-              )
-
-          build = Path("app/build.gradle.kts")
-          with build.open("a") as file:
-              file.write("""
-          
-          tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-              kotlinOptions {
-                  freeCompilerArgs += listOf(
-                      "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-                      "-opt-in=androidx.compose.material.ExperimentalMaterialApi"
-                  )
-              }
-          }
-          """)
-          PY
-
-      - name: Build debug APK
-        run: gradle -Pandroid.useAndroidX=true :app:assembleDebug --stacktrace
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: BetaBlocker-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
- 
+              '<?xml version="1.0" encodi
