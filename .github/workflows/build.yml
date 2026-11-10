@@ -22,7 +22,7 @@ jobs:
         with:
           gradle-version: '8.0.2'
 
-      - name: Remove invalid accessibility dependency
+      - name: Fix project resources and dependencies
         shell: bash
         run: |
           python3 - <<'PY'
@@ -33,17 +33,35 @@ jobs:
               path = Path(name)
               if path.exists():
                   lines = path.read_text().splitlines(keepends=True)
-                  filtered = [line for line in lines if dependency not in line]
-                  path.write_text("".join(filtered))
-                  print(f"{name}: removed {len(lines) - len(filtered)} line(s)")
+                  path.write_text("".join(
+                      line for line in lines if dependency not in line
+                  ))
+
+          icons = Path("app/src/main/res/mipmap")
+          icons.mkdir(parents=True, exist_ok=True)
+
+          icon = """<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="48dp"
+              android:height="48dp"
+              android:viewportWidth="48"
+              android:viewportHeight="48">
+              <path
+                  android:fillColor="#263238"
+                  android:pathData="M0,0h48v48h-48z" />
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M12,21h24v6h-24z" />
+          </vector>
+          """
+
+          for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+              path = icons / name
+              if not path.exists():
+                  path.write_text(icon)
           PY
 
       - name: Build debug APK
         run: gradle -Pandroid.useAndroidX=true :app:assembleDebug --stacktrace
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: BetaBlocker-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+      - name: Up
