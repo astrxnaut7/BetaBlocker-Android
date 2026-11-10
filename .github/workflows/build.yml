@@ -47,6 +47,37 @@ jobs:
             fi
           done
 
+      - name: Add missing accessibility description
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          folder = Path("app/src/main/res/values")
+          folder.mkdir(parents=True, exist_ok=True)
+          found = False
+
+          for file in folder.glob("*.xml"):
+              root = ET.parse(file).getroot()
+              for item in root:
+                  if item.get("name") == "accessibility_description":
+                      if item.tag == "string" or item.get("type") == "string":
+                          found = True
+
+          if not found:
+              root = ET.Element("resources")
+              item = ET.SubElement(
+                  root, "string", name="accessibility_description"
+              )
+              item.text = "Allows BetaBlocker to access screen content for filtering."
+              ET.ElementTree(root).write(
+                  folder / "build_accessibility_description.xml",
+                  encoding="utf-8",
+                  xml_declaration=True
+              )
+          PY
+
       - name: Build debug APK
         run: gradle -Pandroid.useAndroidX=true :app:assembleDebug --stacktrace
 
@@ -55,7 +86,4 @@ jobs:
         with:
           name: BetaBlocker-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-
-          
+          if-no-files-found: erro
