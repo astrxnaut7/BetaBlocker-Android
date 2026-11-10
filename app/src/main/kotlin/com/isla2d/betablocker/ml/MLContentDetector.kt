@@ -2,15 +2,29 @@ package com.isla2d.betablocker.ml
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Rect
+import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.objects.ObjectDetection
-import com.google.mlkit.vision.objects.custom.CustomObjectDetectorOptions
+import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import java.util.concurrent.CancellationException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 
+@Suppress("UNUSED_PARAMETER")
 class MLContentDetector(context: Context) {
-    private val faceDetector: FaceDetector = FaceDetection.getClient()
-    private var objectDetector = setupObjectDetector(context)
+
+    private val faceDetector = FaceDetection.getClient()
+
+    private val objectDetector = ObjectDetection.getClient(
+        ObjectDetectorOptions.Builder()
+            .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+            .enableMultipleObjects()
+            .enableClassification()
+            .build()
+    )
 
     companion object {
         const val FACE = "FACE"
@@ -19,76 +33,33 @@ class MLContentDetector(context: Context) {
         const val HEAD = "HEAD"
     }
 
-    private fun setupObjectDetector(context: Context): com.google.mlkit.vision.objects.ObjectDetector {
-        val options = CustomObjectDetectorOptions.Builder()
-            .setDetectorMode(CustomObjectDetectorOptions.STREAM_MODE)
-            .build()
-        return ObjectDetection.getClient(options)
-    }
+    private suspend fun <T> awaitTask(task: Task<T>): T =
+        suspendCoroutine { continuation ->
+            task.addOnCompleteListener { completed ->
+                when {
+                    completed.isCanceled -> {
+                        continuation.resumeWithException(
+                            CancellationException("Detection cancelled")
+                        )
+                    }
+
+                    completed.isSuccessful -> {
+                        continuation.resume(completed.result)
+                    }
+
+                    else -> {
+                        continuation.resumeWithException(
+                            completed.exception
+                                ?: IllegalStateException("Detection failed")
+                        )
+                    }
+                }
+            }
+        }
 
     suspend fun detectFaces(bitmap: Bitmap): List<DetectedObject> {
         return try {
             val image = InputImage.fromBitmap(bitmap, 0)
-            val faces = faceDetector.process(image)
-                .addOnSuccessListener { detectedFaces ->
-                    // Faces detected
-                }
-                .result
+            val faces = awaitTask(faceDetector.process(image))
 
-            faces.map { face ->
-                DetectedObject(
-                    type = FACE,
-                    boundingBox = face.boundingBox,
-                    confidence = 0.95f,
-                    label = "Face"
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    suspend fun detectObjects(bitmap: Bitmap): List<DetectedObject> {
-        return try {
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val detectedObjects = objectDetector.process(image).result
-
-            detectedObjects.mapNotNull { obj ->
-                val label = obj.labels.firstOrNull()?.text ?: return@mapNotNull null
-                val type = when {
-                    label.contains("person", ignoreCase = true) -> PERSON
-                    label.contains("hand", ignoreCase = true) -> HAND
-                    label.contains("head", ignoreCase = true) -> HEAD
-                    else -> label
-                }
-
-                DetectedObject(
-                    type = type,
-                    boundingBox = obj.boundingBox,
-                    confidence = obj.labels.firstOrNull()?.confidence ?: 0.5f,
-                    label = label
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    suspend fun detectAllContent(bitmap: Bitmap): List<DetectedObject> {
-        val faces = detectFaces(bitmap)
-        val objects = detectObjects(bitmap)
-        return (faces + objects).distinctBy { "${it.boundingBox}" }
-    }
-
-    fun close() {
-        faceDetector.close()
-        objectDetector.close()
-    }
-}
-
-data class DetectedObject(
-    val type: String,
-    val boundingBox: android.graphics.Rect,
-    val confidence: Float,
-    val label: String
-)
+            faces.map { fa
