@@ -26,40 +26,88 @@ jobs:
         with:
           gradle-version: '8.0.2'
 
-      - name: Configure memory and fix project
-        shell: python3 {0}
+      - name: Configure memory
+        shell: bash
         run: |
-          from pathlib import Path
-          import re
-          import xml.etree.ElementTree as ET
+          touch gradle.properties
+          sed -i -E '/^[[:space:]]*(org\.gradle\.jvmargs|org\.gradle\.workers\.max|org\.gradle\.parallel|kotlin\.compiler\.execution\.strategy|android\.useAndroidX)[[:space:]]*=/d' gradle.properties
+          printf '\n%s\n' \
+            'org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
+            'org.gradle.workers.max=2' \
+            'org.gradle.parallel=false' \
+            'kotlin.compiler.execution.strategy=in-process' \
+            'android.useAndroidX=true' >> gradle.properties
 
-          properties = {
-              "org.gradle.jvmargs": "-Xmx3g -XX:MaxMetaspaceSize=768m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8",
-              "org.gradle.workers.max": "2",
-              "org.gradle.parallel": "false",
-              "kotlin.compiler.execution.strategy": "in-process",
-              "android.useAndroidX": "true",
-          }
-          path = Path("gradle.properties")
-          lines = path.read_text().splitlines() if path.exists() else []
-          lines = [
-              line for line in lines
-              if line.strip().split("=", 1)[0].strip() not in properties
-          ]
-          lines.extend(f"{key}={value}" for key, value in properties.items())
-          path.write_text("\n".join(lines) + "\n")
+      - name: Fix dependencies and compiler options
+        shell: bash
+        run: |
+          file=app/build.gradle.kts
+          sed -i '/androidx\.accessibilityservice:accessibilityservice/d' "$file"
+          if ! grep -q 'material-icons-extended' "$file"; then
+            printf '\n%s\n' \
+              'dependencies {' \
+              '    implementation("androidx.compose.material:material-icons-extended:1.5.0")' \
+              '}' >> "$file"
+          fi
+          printf '\n%s\n' \
+            'tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {' \
+            '    kotlinOptions {' \
+            '        freeCompilerArgs += listOf(' \
+            '            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",' \
+            '            "-opt-in=androidx.compose.material.ExperimentalMaterialApi"' \
+            '        )' \
+            '    }' \
+            '}' >> "$file"
 
-          build = Path("app/build.gradle.kts")
-          text = build.read_text()
-          text = "\n".join(
-              line for line in text.splitlines()
-              if "androidx.accessibilityservice:accessibilityservice" not in line
-          )
-          text += "\n\ndependencies {\n"
-          text += '    implementation("androidx.compose.material:material-icons-extended:1.5.0")\n'
-          text += "}\n"
-          text += "\ntasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {\n"
-          text += "    kotlinOptions {\n"
-          text += "        freeCompilerArgs += listOf(\n"
-          text += '            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",\n'
-          text +=
+      - name: Fix imports
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            for item in \
+              androidx.compose.foundation.clickable \
+              androidx.compose.material.icons.filled.ExpandLess \
+              androidx.compose.material.icons.filled.ExpandMore \
+              androidx.compose.material.icons.filled.CloudUpload; do
+              if ! grep -Fq "import $item" "$file"; then
+                sed -i "/^package /a import $item" "$file"
+              fi
+            done
+          done < <(find app/src -name CustomizationScreen.kt -print0)
+
+      - name: Fix missing resources
+        shell: bash
+        run: |
+          mkdir -p app/src/main/res/mipmap app/src/main/res/values
+          for icon in ic_launcher ic_launcher_round; do
+            file="app/src/main/res/mipmap/$icon.xml"
+            if [ ! -f "$file" ]; then
+              printf '%s\n' \
+                '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">' \
+                '<path android:fillColor="#263238" android:pathData="M0,0h48v48h-48z"/>' \
+                '<path android:fillColor="#FFFFFF" android:pathData="M12,21h24v6h-24z"/>' \
+                '</vector>' > "$file"
+            fi
+          done
+          if ! grep -Rq 'name="accessibility_description"' app/src/main/res/values; then
+            printf '%s\n' \
+              '<resources>' \
+              '<string name="accessibility_description">Allows BetaBlocker to access screen content for filtering.</string>' \
+              '</resources>' > app/src/main/res/values/build_accessibility_description.xml
+          fi
+
+      - name: Build debug APK
+        run: >-
+          gradle
+          -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
+          :app:assembleDebug
+          --no-daemon
+          --max-workers=2
+          --stacktrace
+          --console=plain
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BetaBlocker-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
