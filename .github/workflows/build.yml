@@ -22,6 +22,22 @@ jobs:
         with:
           gradle-version: '8.0.2'
 
+      - name: Remove invalid accessibility dependency
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          dependency = "androidx.accessibilityservice:accessibilityservice"
+          for name in ("app/build.gradle.kts", "app/build.gradle"):
+              path = Path(name)
+              if path.exists():
+                  lines = path.read_text().splitlines(keepends=True)
+                  filtered = [line for line in lines if dependency not in line]
+                  path.write_text("".join(filtered))
+                  print(f"{name}: removed {len(lines) - len(filtered)} line(s)")
+          PY
+
       - name: Build debug APK
         run: gradle -Pandroid.useAndroidX=true :app:assembleDebug --stacktrace
 
